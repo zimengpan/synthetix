@@ -62,6 +62,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
     bool public resolved;
     bool public refundsEnabled;
 
+    // Save `1 - (poolFee + creatorFee)` to save state lookups; this value is between 0 and 1.
     uint internal _feeMultiplier;
 
     /* ---------- Address Resolver Configuration ---------- */
@@ -209,17 +210,16 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
 
     /* ---------- Option Prices ---------- */
 
+    // Note that whenever deposited equals the sum of the long and short bids, which should be all the time,
+    // the resulting prices are guaranteed to be less than 1.
     function _computePrices(
         uint longBids,
         uint shortBids,
         uint _deposited
-    ) internal view returns (uint long, uint short) {
-        require(longBids != 0 && shortBids != 0, "Bids must be nonzero");
-        uint optionsPerSide = _exercisableDeposits(_deposited);
-
+    ) internal pure returns (uint long, uint short) {
         // The math library rounds up on an exact half-increment -- the price on one side may be an increment too high,
         // but this only implies a tiny extra quantity will go to fees.
-        return (longBids.divideDecimalRound(optionsPerSide), shortBids.divideDecimalRound(optionsPerSide));
+        return (longBids.divideDecimalRound(_deposited), shortBids.divideDecimalRound(_deposited));
     }
 
     function senderPriceAndExercisableDeposits() external view returns (uint price, uint exercisable) {
@@ -227,7 +227,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         // On the other hand, if the market has resolved, then only the winning side may exercise.
         exercisable = 0;
         if (!resolved || address(_option(_result())) == msg.sender) {
-            exercisable = _exercisableDeposits(deposited);
+            exercisable = deposited;
         }
 
         // Send the correct price for each side of the market.
@@ -243,8 +243,10 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
     function pricesAfterBidOrRefund(
         Side side,
         uint value,
-        bool refund
+        bool isRefund,
+        bool isCreator // TODO: Update interface
     ) external view returns (uint long, uint short) {
+        // TODO: Adjust for new computations
         (uint longTotalBids, uint shortTotalBids) = _totalBids();
         // prettier-ignore
         function(uint, uint) pure returns (uint) operation = refund ? SafeMath.sub : SafeMath.add;
@@ -255,7 +257,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
             shortTotalBids = operation(shortTotalBids, value);
         }
 
-        if (refund) {
+        if (isRefund) {
             value = value.multiplyDecimalRound(SafeDecimalMath.unit().sub(fees.refundFee));
         }
         return _computePrices(longTotalBids, shortTotalBids, operation(deposited, value));
@@ -266,8 +268,10 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         Side bidSide,
         Side priceSide,
         uint price,
-        bool refund
+        bool isRefund,
+        bool isCreator // TODO: Update interface
     ) external view returns (uint) {
+        // TODO: Adjust for new computations
         uint adjustedPrice = price.multiplyDecimalRound(_feeMultiplier);
         uint bids = _option(priceSide).totalBids();
         uint _deposited = deposited;
@@ -279,7 +283,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
 
             // For refunds, the numerator is the negative of the bid case and,
             // in the denominator the adjusted price has an extra factor of (1 - the refundFee).
-            if (refund) {
+            if (isRefund) {
                 (depositedByPrice, bids) = (bids, depositedByPrice);
                 adjustedPrice = adjustedPrice.multiplyDecimalRound(refundFeeMultiplier);
             }
@@ -290,7 +294,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
             uint bidsPerPrice = bids.divideDecimalRound(adjustedPrice);
 
             // For refunds, the numerator is the negative of the bid case.
-            if (refund) {
+            if (isRefund) {
                 (bidsPerPrice, _deposited) = (_deposited, bidsPerPrice);
             }
 
@@ -341,13 +345,9 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         return (options.long.totalSupply(), options.short.totalSupply());
     }
 
-    function _exercisableDeposits(uint _deposited) internal view returns (uint) {
-        // Fees are deducted at resolution, so remove them if we're still bidding or trading.
-        return resolved ? _deposited : _deposited.multiplyDecimalRound(_feeMultiplier);
-    }
-
+    // This is just a holdover so as not to break the ABI. Once all old markets are closed, this should be deprecated.
     function exercisableDeposits() external view returns (uint) {
-        return _exercisableDeposits(deposited);
+        return deposited;
     }
 
     /* ---------- Utilities ---------- */
@@ -415,6 +415,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         uint shortBids,
         uint _deposited
     ) internal {
+        require(longBids != 0 && shortBids != 0, "Bids must be nonzero");
         (uint256 longPrice, uint256 shortPrice) = _computePrices(longBids, shortBids, _deposited);
         prices = Prices(longPrice, shortPrice);
         emit PricesUpdated(longPrice, shortPrice);
@@ -425,10 +426,15 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
             return;
         }
 
-        _option(side).bid(msg.sender, value);
-        emit Bid(side, msg.sender, value);
+        // Hold some of the bid value as fees, only track the deposits on the effective bid value.
+        // The extra value is not "deposited" but will be remitted as fees at market resolution.
+        // The creator is not charged any fees.
+        uint bidValue = msg.sender == creator ? value : value.multiplyDecimalRound(_feeMultiplier);
 
-        uint _deposited = _incrementDeposited(value);
+        _option(side).bid(msg.sender, bidValue);
+        emit Bid(side, msg.sender, bidValue);
+
+        uint _deposited = _incrementDeposited(bidValue);
         _sUSD().transferFrom(msg.sender, address(this), value);
 
         (uint longTotalBids, uint shortTotalBids) = _totalBids();
@@ -477,15 +483,13 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         oracleDetails.finalPrice = price;
         resolved = true;
 
-        // Now remit any collected fees.
-        // Since the constructor enforces that creatorFee + poolFee < 1, the balance
-        // in the contract will be sufficient to cover these transfers.
+        // Now remit any collected fees, which are the excess sUSD in the contract over and above bid deposits.
         IERC20 sUSD = _sUSD();
+        uint feesCollected = sUSD.balanceOf(address(this)).sub(deposited);
+        uint totalFee = fees.poolFee.add(fees.creatorFee);
+        uint poolFees = feesCollected.multiplyDecimalRound(fees.poolFee).divideDecimalRound(totalFee);
+        uint creatorFees = feesCollected.sub(poolFees);
 
-        uint _deposited = deposited;
-        uint poolFees = _deposited.multiplyDecimalRound(fees.poolFee);
-        uint creatorFees = _deposited.multiplyDecimalRound(fees.creatorFee);
-        _decrementDeposited(creatorFees.add(poolFees));
         sUSD.transfer(_feePool().FEE_ADDRESS(), poolFees);
         sUSD.transfer(creator, creatorFees);
 
@@ -501,7 +505,7 @@ contract BinaryOptionMarket is Owned, MixinResolver, IBinaryOptionMarket {
         afterBidding
         returns (uint longClaimed, uint shortClaimed)
     {
-        uint exercisable = _exercisableDeposits(deposited);
+        uint exercisable = deposited;
         Side outcome = _result();
         bool _resolved = resolved;
 
