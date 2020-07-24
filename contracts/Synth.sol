@@ -5,7 +5,7 @@ import "./Owned.sol";
 import "./ExternStateToken.sol";
 import "./MixinResolver.sol";
 import "./interfaces/ISynth.sol";
-import "./interfaces/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // Internal references
 import "./interfaces/ISystemStatus.sol";
@@ -52,10 +52,11 @@ contract Synth is Owned, IERC20, ExternStateToken, MixinResolver, ISynth {
         address _owner,
         bytes32 _currencyKey,
         uint _totalSupply,
-        address _resolver
+        address _resolver,
+        address[] memory _defaultOperators
     )
         public
-        ExternStateToken(_proxy, _tokenState, _tokenName, _tokenSymbol, _totalSupply, DECIMALS, _owner)
+        ExternStateToken(_proxy, _tokenState, _tokenName, _tokenSymbol, _totalSupply, _owner, _defaultOperators)
         MixinResolver(_resolver, addressesToCache)
     {
         require(_proxy != address(0), "_proxy cannot be 0");

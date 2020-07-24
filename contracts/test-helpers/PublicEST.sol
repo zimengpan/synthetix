@@ -12,8 +12,9 @@ contract PublicEST is ExternStateToken {
         string memory _name,
         string memory _symbol,
         uint _totalSupply,
-        address _owner
-    ) public ExternStateToken(_proxy, _tokenState, _name, _symbol, _totalSupply, DECIMALS, _owner) {}
+        address _owner,
+        address[] memory _defaultOperators
+    ) public ExternStateToken(_proxy, _tokenState, _name, _symbol, _totalSupply, _owner, _defaultOperators) {}
 
     function transfer(address to, uint value) external optionalProxy returns (bool) {
         return _transferByProxy(messageSender, to, value);

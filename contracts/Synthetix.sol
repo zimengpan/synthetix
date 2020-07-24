@@ -1,7 +1,8 @@
 pragma solidity ^0.5.16;
 
+import "@openzeppelin/contracts/token/ERC777/IERC777.sol";
+
 // Inheritance
-import "./interfaces/IERC20.sol";
 import "./ExternStateToken.sol";
 import "./MixinResolver.sol";
 import "./interfaces/ISynthetix.sol";
@@ -18,7 +19,7 @@ import "./interfaces/IRewardsDistribution.sol";
 
 
 // https://docs.synthetix.io/contracts/Synthetix
-contract Synthetix is IERC20, ExternStateToken, MixinResolver, ISynthetix {
+contract Synthetix is Context, IERC20, IERC777, ExternStateToken, MixinResolver, ISynthetix {
     // ========== STATE VARIABLES ==========
 
     // Available Synths which can be used with the system
@@ -52,10 +53,11 @@ contract Synthetix is IERC20, ExternStateToken, MixinResolver, ISynthetix {
         TokenState _tokenState,
         address _owner,
         uint _totalSupply,
-        address _resolver
+        address _resolver,
+        address[] memory _defaultOperators
     )
         public
-        ExternStateToken(_proxy, _tokenState, TOKEN_NAME, TOKEN_SYMBOL, _totalSupply, DECIMALS, _owner)
+        ExternStateToken(_proxy, _tokenState, TOKEN_NAME, TOKEN_SYMBOL, _totalSupply, _owner, _defaultOperators)
         MixinResolver(_resolver, addressesToCache)
     {}
 
@@ -157,6 +159,35 @@ contract Synthetix is IERC20, ExternStateToken, MixinResolver, ISynthetix {
     }
 
     // ========== MUTATIVE FUNCTIONS ==========
+    function send(address to, uint256 value, bytes calldata data) external optionalProxy systemActive {
+        // Ensure they're not trying to exceed their locked amount -- only if they have debt.
+        _canTransfer(messageSender, value);
+
+        _sendByProxy(messageSender, messageSender, to, value, data, "", true);
+    }
+
+    /**
+     * @dev See {IERC777-operatorSend}.
+     *
+     * Emits {Sent} and {IERC20-Transfer} events.
+     */
+    function operatorSend(
+        address from,
+        address to,
+        uint256 value,
+        bytes calldata data,
+        bytes calldata operatorData
+    )
+        external
+        optionalProxy systemActive
+    {
+        require(isOperatorFor(_msgSender(), from), "ERC777: caller is not an operator for holder");
+
+        // Ensure they're not trying to exceed their locked amount -- only if they have debt.
+        _canTransfer(from, value);
+
+        _sendByProxy(messageSender, from, to, value, data, operatorData, true);
+    }
 
     function transfer(address to, uint value) external optionalProxy systemActive returns (bool) {
         // Ensure they're not trying to exceed their locked amount -- only if they have debt.

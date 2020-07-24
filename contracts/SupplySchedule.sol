@@ -10,8 +10,7 @@ import "./Math.sol";
 // Internal references
 import "./Proxy.sol";
 import "./interfaces/ISynthetix.sol";
-import "./interfaces/IERC20.sol";
-
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // https://docs.synthetix.io/contracts/SupplySchedule
 contract SupplySchedule is Owned {

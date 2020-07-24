@@ -11,7 +11,23 @@ contract TokenState is Owned, State {
     mapping(address => uint) public balanceOf;
     mapping(address => mapping(address => uint)) public allowance;
 
+    /* ERC777 fields. */
+    address[] public defaultOperatorsArray;
+    mapping(address => bool) public defaultOperators;
+
+    // For each account, a mapping of its operators and revoked default operators.
+    mapping(address => mapping(address => bool)) public operators;
+    mapping(address => mapping(address => bool)) public revokedDefaultOperators;
+
     constructor(address _owner, address _associatedContract) public Owned(_owner) State(_associatedContract) {}
+
+    /* ========== GETTERS ========== */
+    /**
+     * @dev See {IERC777-defaultOperators}.
+     */
+    function getDefaultOperators() view external onlyAssociatedContract returns (address[] memory) {
+        return defaultOperatorsArray;
+    }
 
     /* ========== SETTERS ========== */
 
@@ -39,5 +55,28 @@ contract TokenState is Owned, State {
      */
     function setBalanceOf(address account, uint value) external onlyAssociatedContract {
         balanceOf[account] = value;
+    }
+
+    function setDefaultOperator(address account) external onlyAssociatedContract {
+        if (!defaultOperators[account]) {
+            defaultOperators[account] = true;
+            defaultOperatorsArray.push(account);
+        }
+    }
+
+    function setOperator(address account, address operator) external onlyAssociatedContract {
+        if (defaultOperators[operator]) {
+            delete revokedDefaultOperators[account][operator];
+        } else {
+            operators[account][operator] = true;
+        }
+    }
+
+    function deleteOperator(address account, address operator) external onlyAssociatedContract {
+         if (TokenState.defaultOperators[operator]) {
+            TokenState.revokedDefaultOperators[account][operator] = true;
+        } else {
+            delete TokenState.operators[account][operator];
+        }
     }
 }

@@ -19,8 +19,9 @@ contract MultiCollateralSynth is Synth {
         bytes32 _currencyKey,
         uint _totalSupply,
         address _resolver,
-        bytes32 _multiCollateralKey
-    ) public Synth(_proxy, _tokenState, _tokenName, _tokenSymbol, _owner, _currencyKey, _totalSupply, _resolver) {
+        bytes32 _multiCollateralKey,
+        address[] memory _defaultOperators
+    ) public Synth(_proxy, _tokenState, _tokenName, _tokenSymbol, _owner, _currencyKey, _totalSupply, _resolver, _defaultOperators) {
         multiCollateralKey = _multiCollateralKey;
 
         appendToAddressCache(multiCollateralKey);
